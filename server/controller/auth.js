@@ -1,12 +1,11 @@
 const mongoSanitize = require("express-mongo-sanitize");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
-require("dotenv").config();
+const UserDB = require("../model/user");
 
 const CreateUser = async (req, res) => {
     try {
         let { name, surname, email, phone, password } = req.body;
-
         // MongoDB Injection temizliği
         name = mongoSanitize.sanitize(name);
         surname = mongoSanitize.sanitize(surname);
@@ -97,6 +96,3 @@ const LoginUser = async (req, res) => {
 };
 
 module.exports = { CreateUser, LoginUser };
-
-
-module.exports = { CreateUser }
