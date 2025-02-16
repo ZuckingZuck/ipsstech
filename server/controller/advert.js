@@ -34,8 +34,19 @@ const AddAdvert = async (req, res) => {
 
 const GetAdverts = async (req, res) => {
     try {
-        const adverts = await AdvertDB.find();
+        const adverts = await AdvertDB.find().populate("owner", "name surname").populate("teamId", "name");
         res.status(200).json(adverts);
+    } catch (error) {
+        console.log(error);
+        res.status(500).json(error);
+    }
+}
+
+const GetAdvertDetail = async (req, res) => {
+    try {
+        const id = req.params.id;
+        const advert = await AdvertDB.findOne({_id: id}).populate("owner", "name surname").populate("teamId", "name");
+        res.status(200).json(advert);
     } catch (error) {
         console.log(error);
         res.status(500).json(error);
@@ -120,4 +131,4 @@ const ApproveAppeal = async (req, res) => {
 
 
 
-module.exports = { AddAdvert, GetAdverts, AppealtoAdvert, ApproveAppeal };
+module.exports = { AddAdvert, GetAdverts, GetAdvertDetail, AppealtoAdvert, ApproveAppeal };

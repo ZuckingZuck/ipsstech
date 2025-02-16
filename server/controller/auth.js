@@ -63,13 +63,13 @@ const LoginUser = async (req, res) => {
         // E-posta adresi ile kullanıcıyı bul
         const user = await UserDB.findOne({ email });
         if (!user) {
-            return res.status(400).json({ error: 'Kullanıcı bulunamadı' });
+            return res.status(400).json({ error: 'Kullanıcı bulunamadı.' });
         }
 
         // Parolayı doğrula
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-            return res.status(400).json({ error: 'Parola hatalı' });
+            return res.status(400).json({ error: 'Parola hatalı.' });
         }
 
         // JWT Token oluştur
