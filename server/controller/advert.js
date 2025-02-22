@@ -53,6 +53,18 @@ const GetAdvertDetail = async (req, res) => {
     }
 }
 
+const GetMyAdvertDetail = async (req, res) => {
+    try {
+        const id = req.params.id;
+        const advert = await AdvertDB.findOne({_id: id}).populate("owner", "name surname").populate("teamId", "name");
+        const appeals = await TeamAppealDB.find({advertId: advert._id}).populate("applicant", "name surname email");
+        res.status(200).json({advert, appeals});
+    } catch (error) {
+        console.log(error);
+        res.status(500).json(error);
+    }
+}
+
 const AppealtoAdvert = async (req, res) => {
     try {
         const id = req.params.id;
@@ -88,6 +100,7 @@ const AppealtoAdvert = async (req, res) => {
 
 
 const ApproveAppeal = async (req, res) => {
+    console.log("approve istegigeldi")
     try {
         const id = req.params.id;
         const user = req.user;
@@ -129,6 +142,33 @@ const ApproveAppeal = async (req, res) => {
 };
 
 
+const RejectAppeal = async (req, res) => {
+    try {
+        const id = req.params.id;
+        const user = req.user;
+
+        const appeal = await TeamAppealDB.findById(id);
+        if (!appeal) {
+            return res.status(404).json({ message: "Başvuru bulunamadı." });
+        }
+
+        const advert = await AdvertDB.findById(appeal.advertId);
+        if (!advert) {
+            return res.status(404).json({ message: "İlan bulunamadı." });
+        }
+
+        if (user._id.toString() !== advert.owner.toString()) {
+            return res.status(403).json({ message: "Bunun için yetkiniz yok." });
+        }
+
+        appeal.status = "Rejected";
+        await appeal.save();
+        res.status(200).json({message: "Başvuru reddedildi."})
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Sunucu hatası", error });
+    }
+};
 
 
-module.exports = { AddAdvert, GetAdverts, GetAdvertDetail, AppealtoAdvert, ApproveAppeal };
+module.exports = { AddAdvert, GetAdverts, GetAdvertDetail, GetMyAdvertDetail, AppealtoAdvert, ApproveAppeal, RejectAppeal };

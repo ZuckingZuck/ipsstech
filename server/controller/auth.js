@@ -2,6 +2,7 @@ const mongoSanitize = require("express-mongo-sanitize");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const UserDB = require("../model/user");
+const user = require("../model/user");
 
 const CreateUser = async (req, res) => {
     try {
@@ -40,6 +41,7 @@ const CreateUser = async (req, res) => {
             message: 'Kullanıcı başarıyla kaydedildi', 
             token, // JWT Token gönderiliyor
             user: {
+                _id: user._id,
                 name: newUser.name,
                 surname: newUser.surname,
                 email: newUser.email,
@@ -83,6 +85,7 @@ const LoginUser = async (req, res) => {
             message: 'Giriş başarılı', 
             token,
             user: {
+                _id: user._id,
                 name: user.name,
                 surname: user.surname,
                 email: user.email,
