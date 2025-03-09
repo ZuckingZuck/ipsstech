@@ -67,7 +67,19 @@ function App() {
     <div className="App">
       <Router>
         <SocketProvider>
-          <ToastContainer />
+          <ToastContainer
+            position="top-right"
+            autoClose={5000}
+            hideProgressBar={false}
+            newestOnTop
+            closeOnClick
+            rtl={false}
+            pauseOnFocusLoss
+            draggable
+            pauseOnHover
+            theme="dark"
+            limit={3}
+          />
           <Navbar />
           <AppRouter />
         </SocketProvider>

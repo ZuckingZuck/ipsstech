@@ -7,7 +7,7 @@ import axios from 'axios';
 const TeamChat = ({ teamId, team, isTeamLeader }) => {
   const navigate = useNavigate();
   const user = useSelector((state) => state.user.user);
-  const { socket, sendMessage, markMessagesAsRead, sendTypingStatus, setActiveTeam, onlineUsers } = useSocket();
+  const { socket, sendMessage, markMessagesAsRead, sendTypingStatus, setActiveTeam, onlineUsers, fetchUnreadCounts } = useSocket();
   
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
@@ -23,13 +23,16 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
     if (teamId) {
       // Aktif takım ID'sini ayarla ve bildirimleri kapat
       setActiveTeam(teamId);
+      
+      // Okunmamış mesaj sayısını güncelle
+      fetchUnreadCounts();
     }
     
     // Temizleme fonksiyonu
     return () => {
       setActiveTeam(null);
     };
-  }, [teamId, setActiveTeam]);
+  }, [teamId, setActiveTeam, fetchUnreadCounts]);
 
   // Takım üyelerini getir
   useEffect(() => {
@@ -114,6 +117,22 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
     fetchMessages();
   }, [teamId, user, markMessagesAsRead, team]);
 
+  // Mesajlar yüklendiğinde veya yeni mesaj geldiğinde otomatik kaydır ve okunmamış mesajları işaretle
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    
+    // Yeni mesajları okundu olarak işaretle
+    if (messages.length > 0 && user && user.user) {
+      const unreadMessages = messages
+        .filter(msg => msg.sender && msg.sender._id !== user.user._id && (!msg.readBy || !msg.readBy.includes(user.user._id)))
+        .map(msg => msg._id);
+        
+      if (unreadMessages.length > 0) {
+        markMessagesAsRead(unreadMessages, teamId);
+      }
+    }
+  }, [messages, user, teamId, markMessagesAsRead]);
+
   // Socket.io mesaj dinleyicileri
   useEffect(() => {
     if (!socket || !user || !user.user) return;
@@ -127,8 +146,11 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
         setMessages(prev => [...prev, data]);
         
         // Mesaj benden değilse okundu olarak işaretle
-        if (data.sender && data.sender._id !== user.user._id) {
-          markMessagesAsRead([data._id], teamId);
+        if (data.sender && data.sender._id !== user.user._id && data._id) {
+          // Kısa bir gecikme ekleyerek mesajın state'e eklenmesini bekle
+          setTimeout(() => {
+            markMessagesAsRead([data._id], teamId);
+          }, 100);
         }
       }
     };
@@ -146,18 +168,28 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
     // Mesaj okundu bildirimi
     const handleMessageRead = (data) => {
       if (data.teamId === teamId) {
+        console.log("Mesaj okundu bildirimi alındı:", data);
+        
         // Mesajları güncelle
         setMessages(prev => 
-          prev.map(msg => 
-            msg._id === data.messageId 
-              ? { 
-                  ...msg, 
-                  readBy: msg.readBy ? 
-                    (msg.readBy.includes(data.userId) ? msg.readBy : [...msg.readBy, data.userId]) 
-                    : [data.userId] 
-                } 
-              : msg
-          )
+          prev.map(msg => {
+            if (msg._id === data.messageId) {
+              // Eğer readBy dizisi yoksa oluştur
+              const readBy = msg.readBy || [];
+              
+              // Kullanıcı zaten mesajı okumuşsa güncelleme yapma
+              if (readBy.includes(data.userId)) {
+                return msg;
+              }
+              
+              // Kullanıcıyı readBy dizisine ekle
+              return { 
+                ...msg, 
+                readBy: [...readBy, data.userId]
+              };
+            }
+            return msg;
+          })
         );
       }
     };
@@ -166,23 +198,29 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
     socket.off('new_message');
     socket.off('user_typing');
     socket.off('message_read');
+    socket.off('message_read_update');
     
     // Yeni dinleyicileri ekle
     socket.on('new_message', handleNewMessage);
     socket.on('user_typing', handleTyping);
     socket.on('message_read', handleMessageRead);
+    socket.on('message_read_update', handleMessageRead);
     
     return () => {
       socket.off('new_message', handleNewMessage);
       socket.off('user_typing', handleTyping);
       socket.off('message_read', handleMessageRead);
+      socket.off('message_read_update', handleMessageRead);
     };
   }, [socket, teamId, user, markMessagesAsRead]);
 
-  // Mesajlar yüklendiğinde veya yeni mesaj geldiğinde otomatik kaydır
+  // Yazıyor durumu değiştiğinde otomatik kaydır
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    // Eğer birisi yazıyorsa, scrollbar'ı aşağı kaydır
+    if (Object.values(typingUsers).some(isTyping => isTyping)) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [typingUsers]);
 
   // Mesaj gönder
   const handleSendMessage = (e) => {
@@ -200,7 +238,16 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
       // Yazıyor durumunu kapat
       sendTypingStatus(teamId, false);
       
-      // Not: Artık optimistik UI güncellemesi yapmıyoruz, çünkü server'dan gelen mesaj daha doğru olacak
+      // Mesaj gönderildikten sonra kısa bir süre bekleyip okunmamış mesajları kontrol et
+      // Bu, yeni gönderilen mesajın görüldü ikonlarının doğru şekilde güncellenmesini sağlar
+      setTimeout(() => {
+        // Son mesajı bul
+        const lastMessage = messages[messages.length - 1];
+        if (lastMessage && lastMessage._id) {
+          // Son mesajı okundu olarak işaretle (kendim için)
+          markMessagesAsRead([lastMessage._id], teamId);
+        }
+      }, 500);
     }
   };
 
@@ -233,9 +280,29 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
     
     if (typingUserIds.length === 0) return null;
     
+    // Yazıyor olan kullanıcıların isimlerini bul
+    const typingUserNames = typingUserIds.map(id => {
+      const member = teamMembers.find(m => m._id === id);
+      return member ? `${member.name}` : 'Birisi';
+    });
+    
+    let typingText = '';
+    if (typingUserNames.length === 1) {
+      typingText = `${typingUserNames[0]} yazıyor...`;
+    } else if (typingUserNames.length === 2) {
+      typingText = `${typingUserNames[0]} ve ${typingUserNames[1]} yazıyor...`;
+    } else if (typingUserNames.length > 2) {
+      typingText = `${typingUserNames.length} kişi yazıyor...`;
+    }
+    
     return (
-      <div className="text-gray-400 text-xs italic ml-4 mb-2">
-        Birisi yazıyor...
+      <div className="text-gray-400 text-xs italic py-2 px-4 bg-gray-800/50 rounded-full w-fit mx-auto mb-4 flex items-center shadow-md">
+        <div className="flex space-x-1 mr-2">
+          <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+          <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+          <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+        </div>
+        {typingText}
       </div>
     );
   };
@@ -259,14 +326,12 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
 
   // Mesajı görenlerin avatarlarını göster
   const renderReadByAvatars = (message) => {
-    if (!message.readBy || message.readBy.length <= 1) return null;
-    
-    // Mesajı gönderen kişiyi hariç tut
-    const readByOthers = message.readBy.filter(id => id !== message.sender._id);
-    if (readByOthers.length === 0) return null;
+    if (!message || !message.readBy) return null;
     
     // Takım üyelerini bul
-    const readByMembers = teamMembers.filter(member => readByOthers.includes(member._id));
+    const readByMembers = teamMembers.filter(member => message.readBy.includes(member._id));
+    
+    if (readByMembers.length === 0) return null;
     
     return (
       <div className="flex -space-x-1 mt-1">
@@ -284,9 +349,9 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
             {member.name ? member.name[0].toUpperCase() : '?'}
           </div>
         ))}
-        {readByOthers.length > 3 && (
+        {readByMembers.length > 3 && (
           <div className="w-4 h-4 rounded-full bg-gray-700 border border-gray-800 flex items-center justify-center text-[8px] text-white" style={{ zIndex: 0 }}>
-            +{readByOthers.length - 3}
+            +{readByMembers.length - 3}
           </div>
         )}
       </div>
@@ -308,7 +373,7 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
   return (
     <div className="bg-gradient-to-br from-gray-800/80 to-gray-900/80 backdrop-blur-xl rounded-2xl border border-gray-700/50 shadow-xl overflow-hidden flex flex-col h-[70vh]">
       {/* Mesajlar Alanı */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
         {loading ? (
           <div className="flex justify-center items-center h-full">
             <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-500"></div>
@@ -322,15 +387,16 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
             <p className="text-sm">İlk mesajı gönderen siz olun!</p>
           </div>
         ) : (
-          <>
+          <div className="flex flex-col space-y-4">
             {messages.map((message, index) => {
               const isMyMessage = user && user.user && message.sender && message.sender._id === user.user._id;
               const isLeaderMessage = isSenderLeader(message.sender);
+              const isLastMessage = index === messages.length - 1;
               
               return (
                 <div
                   key={message._id || index}
-                  className={`flex flex-col ${isMyMessage ? 'items-end' : 'items-start'} mb-2`}
+                  className={`flex flex-col ${isMyMessage ? 'items-end' : 'items-start'}`}
                 >
                   <div
                     className={`max-w-[80%] rounded-2xl px-4 py-2 ${
@@ -373,18 +439,22 @@ const TeamChat = ({ teamId, team, isTeamLeader }) => {
                     </div>
                   </div>
                   
-                  {/* Görüldü Avatarları - Mesaj baloncuğunun altında */}
-                  {isMyMessage && (
-                    <div className="mt-1 mr-1">
+                  {/* Görüldü Avatarları - Sadece son mesajda göster */}
+                  {isLastMessage && (
+                    <div className={`mt-1 ${isMyMessage ? 'mr-1' : 'ml-1'}`}>
                       {renderReadByAvatars(message)}
                     </div>
                   )}
                 </div>
               );
             })}
-            {renderTypingIndicator()}
-            <div ref={messagesEndRef} />
-          </>
+            
+            <div className="mt-2">
+              {renderTypingIndicator()}
+            </div>
+            
+            <div ref={messagesEndRef} className="h-4" />
+          </div>
         )}
       </div>
 

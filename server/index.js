@@ -257,6 +257,12 @@ io.on("connection", (socket) => {
             
             // Kullanıcı zaten mesajı okumuşsa güncelleme yapma
             if (message.readBy.includes(userId)) {
+                // Yine de takım odasına mesajın okunduğunu bildir (anlık güncelleme için)
+                io.to(`team:${teamId}`).emit("message_read", {
+                    messageId,
+                    userId,
+                    teamId
+                });
                 return;
             }
             
@@ -276,6 +282,25 @@ io.on("connection", (socket) => {
         }
     });
     
+    // Anlık mesaj okundu güncelleme bildirimi
+    socket.on("message_read_update", (data) => {
+        const { messageId, userId, teamId } = data;
+        
+        if (!messageId || !userId || !teamId) {
+            return socket.emit("error", { message: "Eksik bilgi" });
+        }
+        
+        // Takım odasına mesajın okunduğunu anlık olarak bildir
+        io.to(`team:${teamId}`).emit("message_read_update", {
+            messageId,
+            userId,
+            teamId
+        });
+        
+        // Aktivite zamanını güncelle
+        userActivity.set(userId, Date.now());
+    });
+    
     // Kullanıcı yazıyor bildirimi
     socket.on("typing", (data) => {
         const { teamId, userId, isTyping } = data;
@@ -287,6 +312,7 @@ io.on("connection", (socket) => {
         
         // Takım odasına kullanıcının yazdığını bildir
         socket.to(`team:${teamId}`).emit("user_typing", {
+            teamId,
             userId,
             isTyping
         });

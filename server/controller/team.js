@@ -96,4 +96,54 @@ const GetTeamMembers = async (req, res) => {
     }
 };
 
-module.exports = { GetTeams, GetMyTeams, GetMyLeds, GetTeamById, GetTeamMembers }
+// Takımdan üye çıkar
+const RemoveTeamMember = async (req, res) => {
+    try {
+        const { teamId, memberId } = req.params;
+        const userId = req.user.id;
+        
+        // Takımı bul
+        const team = await TeamDB.findById(teamId);
+        
+        if (!team) {
+            return res.status(404).json({ error: "Takım bulunamadı" });
+        }
+        
+        // Kullanıcının takım lideri olup olmadığını kontrol et
+        if (team.leader.toString() !== userId) {
+            return res.status(403).json({ error: "Bu işlemi yapmak için takım lideri olmanız gerekiyor" });
+        }
+        
+        // Takım liderini çıkarmaya çalışıyorsa engelle
+        if (team.leader.toString() === memberId) {
+            return res.status(400).json({ error: "Takım lideri takımdan çıkarılamaz" });
+        }
+        
+        // Üyenin takımda olup olmadığını kontrol et
+        const memberIndex = team.members.findIndex(member => member.toString() === memberId);
+        if (memberIndex === -1) {
+            return res.status(404).json({ error: "Belirtilen üye takımda bulunamadı" });
+        }
+        
+        // Üyeyi takımdan çıkar
+        team.members.splice(memberIndex, 1);
+        
+        // Takımı güncelle
+        await team.save();
+        
+        res.status(200).json({ 
+            message: "Üye takımdan başarıyla çıkarıldı", 
+            team: {
+                _id: team._id,
+                name: team.name,
+                leader: team.leader,
+                members: team.members
+            } 
+        });
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ error: "Üye çıkarma işlemi sırasında bir hata oluştu" });
+    }
+};
+
+module.exports = { GetTeams, GetMyTeams, GetMyLeds, GetTeamById, GetTeamMembers, RemoveTeamMember }
