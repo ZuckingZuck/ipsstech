@@ -12,6 +12,9 @@ import MyMemberships from "../pages/MyMemberships";
 import MyAdverts from "../pages/MyAdverts";
 import AddAdvert from "../pages/AddAdvert";
 import MyAdvertDetail from "../pages/MyAdvertDetail";
+import Messages from "../pages/Messages";
+import TeamDetail from "../pages/TeamDetail";
+
 const AppRouter = () => {
     const user = useSelector((state) => state.user.user)
   return (
@@ -24,6 +27,8 @@ const AppRouter = () => {
       <Route path="/me/adverts" element={user ? <MyAdverts /> : <Navigate to="/login"/> } />
       <Route path="/me/adverts/:id" element={user ? <MyAdvertDetail /> : <Navigate to="/login"/> } />
       <Route path="/me/adverts/add" element={user ? <AddAdvert /> : <Navigate to="/login"/> } />
+      <Route path="/team/:teamId" element={user ? <TeamDetail /> : <Navigate to="/login"/> } />
+      <Route path="/me/messages" element={user ? <Messages /> : <Navigate to="/login"/> } />
       <Route path="/login" element={user ? <Navigate to="/"/> : <Login />} />
       <Route path="/register" element={user ? <Navigate to="/"/> : <Register />} />
       <Route path="*" element={<NotFound />} />

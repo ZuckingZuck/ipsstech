@@ -1,11 +1,26 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { NavLink } from 'react-router'
+import { NavLink } from 'react-router-dom'
 import { userLogout } from '../redux/userSlice';
+import { useSocket } from '../context/SocketContext';
 
 const Navbar = () => {
     const dispatch = useDispatch();
     const user = useSelector((state) => state.user.user);
+    const teams = useSelector((state) => state.team.myteams) || [];
+    const ledTeams = useSelector((state) => state.team.myleds) || [];
+    const { unreadMessages, fetchUnreadCounts } = useSocket();
+    
+    // İlk takımın ID'sini bul (varsa)
+    const firstTeamId = [...teams, ...ledTeams][0]?._id;
+    
+    // Sayfa yüklendiğinde okunmamış mesaj sayısını getir
+    useEffect(() => {
+        if (user && user.token) {
+            fetchUnreadCounts();
+        }
+    }, [user, fetchUnreadCounts]);
+    
     const LogOut = () => {
         dispatch(userLogout());
     }
@@ -33,13 +48,28 @@ const Navbar = () => {
                     {user ? (
                         <div className='flex items-center space-x-6'>
                             <NavLink 
+                                className="text-gray-300 hover:text-white font-medium transition-all duration-300 relative" 
+                                to="/me/messages"
+                                onClick={() => fetchUnreadCounts()}
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                                </svg>
+                                {unreadMessages > 0 && (
+                                    <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
+                                        {unreadMessages > 99 ? '99+' : unreadMessages}
+                                    </span>
+                                )}
+                            </NavLink>
+                            
+                            <NavLink 
                                 className="text-gray-300 hover:text-white font-medium transition-all duration-300 flex items-center gap-2" 
                                 to="/me"
                             >
                                 <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center">
-                                    {user.user.name[0].toUpperCase()}
+                                    {user.user && user.user.name ? user.user.name[0].toUpperCase() : '?'}
                                 </div>
-                                <span>{user.user.name} {user.user.surname}</span>
+                                <span>{user.user && user.user.name ? `${user.user.name} ${user.user.surname}` : 'Kullanıcı'}</span>
                             </NavLink>
                             
                             <button 

@@ -1,7 +1,14 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
+import { useSelector } from "react-redux";
+import { useSocket } from "../../context/SocketContext";
 
 const Menu = () => {
+  const { teamUnreadCounts } = useSocket();
+  
+  // Toplam okunmamış mesaj sayısını hesapla
+  const totalUnread = Object.values(teamUnreadCounts || {}).reduce((sum, count) => sum + count, 0);
+  
   const menuItems = [
     {
       path: "/me",
@@ -13,6 +20,18 @@ const Menu = () => {
       title: "Profilim",
       gradient: "from-blue-500 to-purple-600",
       hoverGradient: "from-blue-600 to-purple-700",
+    },
+    {
+      path: "/me/messages",
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+        </svg>
+      ),
+      title: "Mesajlar",
+      badge: totalUnread > 0 ? totalUnread : null,
+      gradient: "from-cyan-500 to-blue-600",
+      hoverGradient: "from-cyan-600 to-blue-700",
     },
     {
       path: "/me/teams",
@@ -64,16 +83,17 @@ const Menu = () => {
               }`
             }
           >
-            <div className={({ isActive }) => 
-              `p-2 rounded-lg transition-all duration-300 ${
-                isActive 
-                ? 'bg-white/10' 
-                : 'bg-gray-700/50 group-hover:bg-white/10'
-              }`
-            }>
+            <div className="p-2 rounded-lg transition-all duration-300 bg-gray-700/50 group-hover:bg-white/10">
               {item.icon}
             </div>
             <span className="font-medium">{item.title}</span>
+            
+            {/* Bildirim rozeti */}
+            {item.badge && (
+              <span className="ml-auto bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-5 px-1 flex items-center justify-center">
+                {item.badge > 99 ? '99+' : item.badge}
+              </span>
+            )}
           </NavLink>
         ))}
       </nav>

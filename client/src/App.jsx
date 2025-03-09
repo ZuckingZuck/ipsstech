@@ -7,6 +7,8 @@ import { useDispatch, useSelector } from "react-redux";
 import { fetchAdverts } from "./redux/advertSlice";
 import { useEffect } from "react";
 import { fetchLeds, fetchTeams } from "./redux/teamSlice";
+import SocketProvider from "./context/SocketContext";
+
 function App() {
   const dispatch = useDispatch();
   const user = useSelector((state) => state.user.user);
@@ -56,15 +58,19 @@ function App() {
   }
   useEffect(() => {
     GetAdverts();
-    GetTeams();
-    GetLeds();
-  }, [])
+    if (user) {
+      GetTeams();
+      GetLeds();
+    }
+  }, [user])
   return (
     <div className="App">
       <Router>
+        <SocketProvider>
           <ToastContainer />
           <Navbar />
           <AppRouter />
+        </SocketProvider>
       </Router>
     </div>
   );
