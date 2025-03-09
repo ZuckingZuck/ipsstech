@@ -16,15 +16,12 @@ const io = new Server(server, {
     }
 });
 
-// Model ve controller'ları import et
-const MessageDB = require("./model/message");
-const TeamDB = require("./model/team");
-const UserDB = require("./model/user");
-
+// Router'ları import et
 const authRouter = require("./route/auth");
 const advertRouter = require("./route/advert");
 const teamRouter = require("./route/team");
 const messageRouter = require("./route/message");
+const notificationRouter = require("./route/notification");
 
 app.use(cors())
 app.use(express.json());
@@ -34,6 +31,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/advert", advertRouter);
 app.use("/api/team", teamRouter);
 app.use("/api/message", messageRouter);
+app.use("/api/notification", notificationRouter);
 
 // Socket.io bağlantı yönetimi
 const connectedUsers = new Map(); // Kullanıcı ID'si -> socket.id eşleşmesi
@@ -41,26 +39,52 @@ const userTeams = new Map(); // Kullanıcı ID'si -> takım ID'leri eşleşmesi
 const teamUsers = new Map(); // Takım ID'si -> kullanıcı ID'leri eşleşmesi
 const userActivity = new Map(); // Kullanıcı ID'si -> son aktivite zamanı
 
+// io ve connectedUsers nesnelerini app nesnesine ekle
+app.set('io', io);
+app.set('connectedUsers', connectedUsers);
+
+// Tüm takımlara kullanıcı durumlarını yayınla
+function broadcastUserStatus() {
+    // Her takım için online kullanıcıları belirle
+    for (const [teamId, members] of teamUsers.entries()) {
+        const onlineUsers = {};
+        
+        // Her üyenin online durumunu kontrol et
+        members.forEach(userId => {
+            onlineUsers[userId] = connectedUsers.has(userId);
+        });
+        
+        // Takım odasına online kullanıcıları bildir
+        io.to(`team:${teamId}`).emit("user_status", onlineUsers);
+    }
+}
+
+// Model değişkenlerini tanımla
+let UserDB;
+let TeamDB;
+let MessageDB;
+let NotificationDB;
+
 // Kullanıcı aktivitesini kontrol et ve çevrimiçi durumunu güncelle
 setInterval(() => {
     const now = Date.now();
     for (const [userId, lastActivity] of userActivity.entries()) {
-        // 5 dakikadan fazla aktivite yoksa çevrimdışı olarak işaretle
+        // 5 dakikadan fazla aktivite yoksa kullanıcıyı offline olarak işaretle
         if (now - lastActivity > 5 * 60 * 1000) {
+            // Kullanıcının bağlantısını kapat
             if (connectedUsers.has(userId)) {
-                // Kullanıcıyı çevrimdışı olarak işaretle
+                const socketId = connectedUsers.get(userId);
+                const socket = io.sockets.sockets.get(socketId);
+                
+                if (socket) {
+                    socket.disconnect(true);
+                }
+                
+                // Kullanıcıyı bağlı kullanıcılar listesinden çıkar
                 connectedUsers.delete(userId);
                 
-                // Kullanıcının takımlarını al
-                const teams = userTeams.get(userId) || [];
-                
-                // Takımdaki diğer kullanıcılara offline durumunu bildir
-                teams.forEach(teamId => {
-                    io.to(`team:${teamId}`).emit("user_status_change", {
-                        userId,
-                        status: "offline"
-                    });
-                });
+                // Kullanıcının takımlarını temizle
+                userTeams.delete(userId);
                 
                 // Tüm takımlara kullanıcı durumlarını yayınla
                 broadcastUserStatus();
@@ -72,40 +96,46 @@ setInterval(() => {
 io.on("connection", (socket) => {
     console.log("Yeni bir kullanıcı bağlandı:", socket.id);
     
-    // Kullanıcı kimlik doğrulama
-    socket.on("authenticate", (userData) => {
-        if (userData && userData.userId) {
-            console.log(`Kullanıcı kimliği doğrulandı: ${userData.userId}`);
-            connectedUsers.set(userData.userId, socket.id);
-            userActivity.set(userData.userId, Date.now()); // Aktivite zamanını güncelle
+    // Kullanıcı kimliği doğrulama
+    socket.on("authenticate", async (data) => {
+        try {
+            const { userId, teams } = data;
             
-            // Kullanıcıyı kendi odasına ekle (özel mesajlar için)
-            socket.join(userData.userId);
+            if (!userId) {
+                return socket.emit("error", { message: "Kullanıcı kimliği gerekli" });
+            }
+            
+            // Kullanıcıyı bağlı kullanıcılar listesine ekle
+            connectedUsers.set(userId, socket.id);
+            
+            // Kullanıcının aktivite zamanını güncelle
+            userActivity.set(userId, Date.now());
+            
+            console.log("Kullanıcı kimliği doğrulandı:", userId);
             
             // Kullanıcının takımlarını kaydet
-            if (userData.teams && Array.isArray(userData.teams)) {
-                userTeams.set(userData.userId, userData.teams);
+            if (teams && Array.isArray(teams)) {
+                userTeams.set(userId, teams);
                 
-                // Kullanıcıyı takım odalarına ekle
-                userData.teams.forEach(teamId => {
+                // Her takım için kullanıcıyı ekle
+                teams.forEach(teamId => {
+                    if (!teamId) return;
+                    
+                    // Takım odasına katıl
                     socket.join(`team:${teamId}`);
                     
-                    // Takım kullanıcılarını güncelle
-                    if (!teamUsers.has(teamId)) {
-                        teamUsers.set(teamId, new Set());
-                    }
-                    teamUsers.get(teamId).add(userData.userId);
-                    
-                    // Takımdaki diğer kullanıcılara online durumunu bildir
-                    socket.to(`team:${teamId}`).emit("user_status_change", {
-                        userId: userData.userId,
-                        status: "online"
-                    });
+                    // Takım üyelerini güncelle
+                    const teamMembers = teamUsers.get(teamId) || new Set();
+                    teamMembers.add(userId);
+                    teamUsers.set(teamId, teamMembers);
                 });
             }
             
-            // Tüm takımlara kullanıcının online olduğunu bildir
+            // Tüm takımlara kullanıcı durumlarını yayınla
             broadcastUserStatus();
+        } catch (error) {
+            console.error("Kimlik doğrulama hatası:", error);
+            socket.emit("error", { message: "Kimlik doğrulama hatası" });
         }
     });
     
@@ -257,12 +287,6 @@ io.on("connection", (socket) => {
             
             // Kullanıcı zaten mesajı okumuşsa güncelleme yapma
             if (message.readBy.includes(userId)) {
-                // Yine de takım odasına mesajın okunduğunu bildir (anlık güncelleme için)
-                io.to(`team:${teamId}`).emit("message_read", {
-                    messageId,
-                    userId,
-                    teamId
-                });
                 return;
             }
             
@@ -282,25 +306,6 @@ io.on("connection", (socket) => {
         }
     });
     
-    // Anlık mesaj okundu güncelleme bildirimi
-    socket.on("message_read_update", (data) => {
-        const { messageId, userId, teamId } = data;
-        
-        if (!messageId || !userId || !teamId) {
-            return socket.emit("error", { message: "Eksik bilgi" });
-        }
-        
-        // Takım odasına mesajın okunduğunu anlık olarak bildir
-        io.to(`team:${teamId}`).emit("message_read_update", {
-            messageId,
-            userId,
-            teamId
-        });
-        
-        // Aktivite zamanını güncelle
-        userActivity.set(userId, Date.now());
-    });
-    
     // Kullanıcı yazıyor bildirimi
     socket.on("typing", (data) => {
         const { teamId, userId, isTyping } = data;
@@ -318,67 +323,362 @@ io.on("connection", (socket) => {
         });
     });
     
+    // Takım daveti gönderme
+    socket.on("send_team_invite", async (data) => {
+        try {
+            console.log("Takım daveti isteği alındı:", data);
+            const { userId, teamId, senderId } = data;
+            
+            if (!userId || !teamId || !senderId) {
+                console.error("Takım daveti hatası: Eksik bilgi", data);
+                return socket.emit("error", { message: "Eksik bilgi" });
+            }
+            
+            // Aktivite zamanını güncelle
+            userActivity.set(senderId, Date.now());
+            
+            // Kullanıcıyı kontrol et
+            const user = await UserDB.findById(userId);
+            if (!user) {
+                console.error("Takım daveti hatası: Kullanıcı bulunamadı", { userId });
+                return socket.emit("error", { message: "Kullanıcı bulunamadı" });
+            }
+            
+            // Takımı kontrol et
+            const team = await TeamDB.findById(teamId);
+            if (!team) {
+                console.error("Takım daveti hatası: Takım bulunamadı", { teamId });
+                return socket.emit("error", { message: "Takım bulunamadı" });
+            }
+            
+            // Kullanıcının takım lideri olup olmadığını kontrol et
+            if (team.leader.toString() !== senderId) {
+                console.error("Takım daveti hatası: Kullanıcı takım lideri değil", { 
+                    teamLeader: team.leader.toString(), 
+                    senderId 
+                });
+                return socket.emit("error", { message: "Bu takıma davet göndermek için takım lideri olmanız gerekiyor" });
+            }
+            
+            // Kullanıcının zaten takımda olup olmadığını kontrol et
+            if (team.members.includes(userId)) {
+                console.error("Takım daveti hatası: Kullanıcı zaten takımın üyesi", { userId, teamId });
+                return socket.emit("error", { message: "Bu kullanıcı zaten takımın bir üyesi" });
+            }
+            
+            // Kullanıcının başka takımlara üyeliğini kontrol et
+            const userTeams = await TeamDB.find({ members: userId });
+            if (userTeams && userTeams.length > 0) {
+                console.error("Takım daveti hatası: Kullanıcı zaten başka bir takımın üyesi", { 
+                    userId, 
+                    teams: userTeams.map(t => t._id) 
+                });
+                return socket.emit("error", { message: "Bu kullanıcı zaten başka bir takımın üyesi" });
+            }
+            
+            // Kullanıcının zaten davet edilip edilmediğini kontrol et
+            const existingInvite = await NotificationDB.findOne({
+                recipient: userId,
+                sender: senderId,
+                teamId: teamId,
+                type: 'team_invite',
+                status: 'pending'
+            });
+            
+            if (existingInvite) {
+                console.error("Takım daveti hatası: Kullanıcıya zaten davet gönderilmiş", { 
+                    userId, 
+                    teamId, 
+                    inviteId: existingInvite._id 
+                });
+                return socket.emit("error", { message: "Bu kullanıcıya zaten bir davet gönderilmiş" });
+            }
+            
+            // Göndereni bul
+            const sender = await UserDB.findById(senderId);
+            if (!sender) {
+                console.error("Takım daveti hatası: Gönderen bulunamadı", { senderId });
+                return socket.emit("error", { message: "Gönderen kullanıcı bulunamadı" });
+            }
+            
+            // Model adlarını kontrol et
+            console.log('Model adları:', {
+                NotificationModel: NotificationDB.modelName,
+                UserModel: UserDB.modelName,
+                TeamModel: TeamDB.modelName
+            });
+            
+            // Yeni bildirim oluştur
+            const notificationData = {
+                recipient: userId,
+                sender: senderId,
+                type: 'team_invite',
+                content: `${sender.name} ${sender.surname} sizi "${team.name}" takımına davet etti`,
+                teamId: teamId,
+                status: 'pending',
+                data: {
+                    teamId: team._id,
+                    teamName: team.name,
+                    senderId: sender._id,
+                    senderName: `${sender.name} ${sender.surname}`
+                }
+            };
+            
+            console.log("Oluşturulacak bildirim:", notificationData);
+            
+            const notification = new NotificationDB(notificationData);
+            const savedNotification = await notification.save();
+            console.log("Takım daveti bildirimi oluşturuldu:", savedNotification._id);
+            
+            // Bildirimi populate et
+            let populatedNotification;
+            try {
+                populatedNotification = await NotificationDB.findById(savedNotification._id)
+                    .populate('sender', 'name surname')
+                    .populate('teamId', 'name');
+                console.log("Populate edilmiş bildirim:", populatedNotification);
+            } catch (populateError) {
+                console.error("Bildirim populate hatası:", populateError);
+                populatedNotification = savedNotification;
+            }
+            
+            // Daveti gönderen kullanıcıya başarı mesajı gönder
+            socket.emit("team_invite_sent", { 
+                message: "Takım daveti başarıyla gönderildi", 
+                notification: populatedNotification 
+            });
+            console.log("Takım daveti başarı mesajı gönderildi:", socket.id);
+            
+            // Davet edilen kullanıcıya bildirim gönder
+            if (connectedUsers.has(userId)) {
+                const userSocketId = connectedUsers.get(userId);
+                io.to(userSocketId).emit("new_notification", populatedNotification);
+                console.log("Davet edilen kullanıcıya bildirim gönderildi:", userSocketId);
+            } else {
+                console.log("Davet edilen kullanıcı çevrimiçi değil:", userId);
+            }
+        } catch (error) {
+            console.error("Davet gönderme hatası:", error);
+            socket.emit("error", { message: "Davet gönderilemedi: " + error.message });
+        }
+    });
+    
+    // Takım daveti kabul edildi
+    socket.on("accept_team_invite", async (data) => {
+        try {
+            console.log("Takım daveti kabul edildi isteği alındı:", data);
+            const { userId, teamId, notificationId } = data;
+            
+            if (!userId || !teamId || !notificationId) {
+                console.error("Takım daveti kabul hatası: Eksik bilgi", data);
+                return socket.emit("error", { message: "Eksik bilgi" });
+            }
+            
+            // Aktivite zamanını güncelle
+            userActivity.set(userId, Date.now());
+            
+            // Bildirimi bul
+            const notification = await NotificationDB.findById(notificationId);
+            if (!notification) {
+                console.error("Takım daveti kabul hatası: Bildirim bulunamadı", { notificationId });
+                return socket.emit("error", { message: "Bildirim bulunamadı" });
+            }
+            
+            // Bildirimin alıcısı kullanıcı mı kontrol et
+            if (notification.recipient.toString() !== userId) {
+                console.error("Takım daveti kabul hatası: Yetki hatası", { 
+                    recipient: notification.recipient.toString(), 
+                    userId 
+                });
+                return socket.emit("error", { message: "Bu daveti kabul etme yetkiniz yok" });
+            }
+            
+            // Bildirimin durumunu kontrol et
+            if (notification.status !== 'pending') {
+                console.error("Takım daveti kabul hatası: Bildirim durumu hatası", notification.status);
+                return socket.emit("error", { message: "Bu davet zaten işlenmiş" });
+            }
+            
+            // Takımı bul
+            const team = await TeamDB.findById(teamId);
+            if (!team) {
+                console.error("Takım daveti kabul hatası: Takım bulunamadı", { teamId });
+                return socket.emit("error", { message: "Takım bulunamadı" });
+            }
+            
+            // Kullanıcıyı bul
+            const user = await UserDB.findById(userId);
+            if (!user) {
+                console.error("Takım daveti kabul hatası: Kullanıcı bulunamadı", { userId });
+                return socket.emit("error", { message: "Kullanıcı bulunamadı" });
+            }
+            
+            // Kullanıcının zaten takımda olup olmadığını kontrol et
+            if (team.members.includes(userId)) {
+                // Bildirimi güncelle
+                notification.status = 'accepted';
+                notification.read = true;
+                await notification.save();
+                
+                console.log("Takım daveti kabul hatası: Kullanıcı zaten takımın üyesi", { userId, teamId });
+                return socket.emit("error", { message: "Zaten bu takımın bir üyesisiniz" });
+            }
+            
+            // Kullanıcıyı takıma ekle
+            team.members.push(userId);
+            await team.save();
+            console.log("Kullanıcı takıma eklendi:", { userId, teamId });
+            
+            // Bildirimi güncelle
+            notification.status = 'accepted';
+            notification.read = true;
+            await notification.save();
+            console.log("Bildirim güncellendi:", notification._id);
+            
+            // Takım liderine bildirim gönder
+            const teamLeaderId = team.leader.toString();
+            const userName = `${user.name} ${user.surname}`;
+            const message = `${userName} "${team.name}" takımına katıldı`;
+            
+            // Daveti kabul eden kullanıcıya başarı mesajı gönder
+            socket.emit("team_invite_accepted", { 
+                message: "Takım daveti başarıyla kabul edildi", 
+                team,
+                notification 
+            });
+            
+            // Takım liderine bildirim gönder
+            if (connectedUsers.has(teamLeaderId)) {
+                io.to(connectedUsers.get(teamLeaderId)).emit("team_member_joined", { 
+                    message, 
+                    teamId,
+                    userId,
+                    userName
+                });
+            }
+        } catch (error) {
+            console.error("Takım daveti kabul hatası:", error);
+            socket.emit("error", { message: "Davet kabul edilemedi: " + error.message });
+        }
+    });
+    
+    // Takım daveti reddedildi
+    socket.on("reject_team_invite", async (data) => {
+        try {
+            console.log("Takım daveti reddedildi isteği alındı:", data);
+            const { userId, teamId, notificationId } = data;
+            
+            if (!userId || !teamId || !notificationId) {
+                console.error("Takım daveti red hatası: Eksik bilgi", data);
+                return socket.emit("error", { message: "Eksik bilgi" });
+            }
+            
+            // Aktivite zamanını güncelle
+            userActivity.set(userId, Date.now());
+            
+            // Bildirimi bul
+            const notification = await NotificationDB.findById(notificationId);
+            if (!notification) {
+                console.error("Takım daveti red hatası: Bildirim bulunamadı", { notificationId });
+                return socket.emit("error", { message: "Bildirim bulunamadı" });
+            }
+            
+            // Bildirimin alıcısı kullanıcı mı kontrol et
+            if (notification.recipient.toString() !== userId) {
+                console.error("Takım daveti red hatası: Yetki hatası", { 
+                    recipient: notification.recipient.toString(), 
+                    userId 
+                });
+                return socket.emit("error", { message: "Bu daveti reddetme yetkiniz yok" });
+            }
+            
+            // Bildirimin durumunu kontrol et
+            if (notification.status !== 'pending') {
+                console.error("Takım daveti red hatası: Bildirim durumu hatası", notification.status);
+                return socket.emit("error", { message: "Bu davet zaten işlenmiş" });
+            }
+            
+            // Kullanıcıyı bul
+            const user = await UserDB.findById(userId);
+            if (!user) {
+                console.error("Takım daveti red hatası: Kullanıcı bulunamadı", { userId });
+                return socket.emit("error", { message: "Kullanıcı bulunamadı" });
+            }
+            
+            // Bildirimi güncelle
+            notification.status = 'rejected';
+            notification.read = true;
+            await notification.save();
+            console.log("Bildirim güncellendi:", notification._id);
+            
+            // Daveti reddeden kullanıcıya başarı mesajı gönder
+            socket.emit("team_invite_rejected", { 
+                message: "Takım daveti reddedildi", 
+                notification 
+            });
+            
+            // Takım liderine bildirim gönder
+            const teamLeaderId = notification.sender.toString();
+            const userName = `${user.name} ${user.surname}`;
+            const teamName = notification.data && notification.data.teamName ? notification.data.teamName : 'takım';
+            
+            if (connectedUsers.has(teamLeaderId)) {
+                io.to(connectedUsers.get(teamLeaderId)).emit("team_invite_rejected", { 
+                    message: `${userName} "${teamName}" takımına katılma davetini reddetti`, 
+                    teamId,
+                    userId,
+                    userName
+                });
+            }
+        } catch (error) {
+            console.error("Takım daveti red hatası:", error);
+            socket.emit("error", { message: "Davet reddedilemedi: " + error.message });
+        }
+    });
+    
     // Bağlantı kesildiğinde
     socket.on("disconnect", () => {
         console.log("Kullanıcı bağlantısı kesildi:", socket.id);
         
-        // Bağlantısı kesilen kullanıcıyı bul
+        // Kullanıcı ID'sini bul
         let disconnectedUserId = null;
         for (const [userId, socketId] of connectedUsers.entries()) {
             if (socketId === socket.id) {
                 disconnectedUserId = userId;
-                connectedUsers.delete(userId);
                 break;
             }
         }
         
         if (disconnectedUserId) {
-            // Kullanıcının takımlarını al
-            const teams = userTeams.get(disconnectedUserId) || [];
+            // Kullanıcıyı bağlı kullanıcılar listesinden çıkar
+            connectedUsers.delete(disconnectedUserId);
             
-            // Takım listesinden kullanıcıyı çıkar
-            teams.forEach(teamId => {
-                const teamMembers = teamUsers.get(teamId);
-                if (teamMembers) {
-                    teamMembers.delete(disconnectedUserId);
-                    
-                    // Takımdaki diğer kullanıcılara offline durumunu bildir
-                    io.to(`team:${teamId}`).emit("user_status_change", {
-                        userId: disconnectedUserId,
-                        status: "offline"
-                    });
-                }
-            });
-            
-            // Kullanıcının takım listesini temizle
+            // Kullanıcının takımlarını temizle
             userTeams.delete(disconnectedUserId);
             
             // Tüm takımlara kullanıcının offline olduğunu bildir
             broadcastUserStatus();
         }
     });
-    
-    // Tüm takımlara kullanıcı durumlarını yayınla
-    function broadcastUserStatus() {
-        // Her takım için online kullanıcıları belirle
-        for (const [teamId, members] of teamUsers.entries()) {
-            const onlineUsers = {};
-            
-            // Her üyenin online durumunu kontrol et
-            members.forEach(userId => {
-                onlineUsers[userId] = connectedUsers.has(userId);
-            });
-            
-            // Takım odasına online kullanıcıları bildir
-            io.to(`team:${teamId}`).emit("user_status", onlineUsers);
-        }
-    }
 });
 
 async function connectDB() {
     try {
         await mongoose.connect(db_url);
         console.log("Connected to DB");
+
+        // Model tanımlamalarını yap - sıralama önemli
+        UserDB = require("./model/user");
+        TeamDB = require("./model/team");
+        MessageDB = require("./model/message");
+        NotificationDB = require("./model/notification");
+
+        console.log("Modeller yüklendi:", {
+            UserModel: UserDB.modelName,
+            TeamModel: TeamDB.modelName,
+            MessageModel: MessageDB.modelName,
+            NotificationModel: NotificationDB.modelName
+        });
 
         app.use("/", router);
         server.listen(port, () => {

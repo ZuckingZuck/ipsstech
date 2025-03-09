@@ -41,7 +41,7 @@ const CreateUser = async (req, res) => {
             message: 'Kullanıcı başarıyla kaydedildi', 
             token, // JWT Token gönderiliyor
             user: {
-                _id: user._id,
+                _id: newUser._id,
                 name: newUser.name,
                 surname: newUser.surname,
                 email: newUser.email,

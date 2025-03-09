@@ -20,4 +20,17 @@ const TeamSchema = mongoose.Schema({
     }]    
 }, {timestamps: true})
 
+// Üye eklemeden önce kontrol et
+TeamSchema.methods.addMember = function(userId) {
+    const userIdStr = userId.toString();
+    const isMember = this.members.some(memberId => memberId.toString() === userIdStr);
+    
+    if (!isMember) {
+        this.members.push(userId);
+        return true;
+    }
+    
+    return false;
+};
+
 module.exports = mongoose.model("teams", TeamSchema);

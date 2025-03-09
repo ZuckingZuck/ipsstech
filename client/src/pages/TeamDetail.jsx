@@ -23,6 +23,8 @@ const TeamDetail = () => {
   const [typingUsers, setTypingUsers] = useState({});
   const [removingMember, setRemovingMember] = useState(null); // Çıkarılmakta olan üyenin ID'si
   const [confirmModal, setConfirmModal] = useState({ show: false, memberId: null, memberName: '' });
+  const [deleteTeamModal, setDeleteTeamModal] = useState(false);
+  const [deletingTeam, setDeletingTeam] = useState(false);
 
   // Aktif takımı ayarla
   useEffect(() => {
@@ -202,6 +204,35 @@ const TeamDetail = () => {
       memberId: member._id,
       memberName: `${member.name} ${member.surname}`
     });
+  };
+
+  // Takımı sil
+  const handleDeleteTeam = async () => {
+    if (!teamId || !user || !user.token) return;
+    
+    setDeletingTeam(true);
+    
+    try {
+      const response = await axios.delete(
+        `${import.meta.env.VITE_REACT_APP_API_URL}/api/team/${teamId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${user.token}`
+          }
+        }
+      );
+      
+      if (response.status === 200) {
+        toast.success("Takım başarıyla silindi");
+        navigate('/me/teams');
+      }
+    } catch (error) {
+      console.error("Takım silme hatası:", error);
+      toast.error(error.response?.data?.error || "Takım silinirken bir hata oluştu");
+    } finally {
+      setDeletingTeam(false);
+      setDeleteTeamModal(false);
+    }
   };
 
   if (loading) {
@@ -497,6 +528,22 @@ const TeamDetail = () => {
                         ></textarea>
                       </div>
                       
+                      <div className="border-t border-gray-700 pt-6 mt-6">
+                        <h3 className="text-lg font-semibold text-white mb-4">Tehlikeli İşlemler</h3>
+                        <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+                          <h4 className="text-red-400 font-medium mb-2">Takımı Sil</h4>
+                          <p className="text-gray-400 text-sm mb-4">
+                            Bu işlem geri alınamaz. Takım ve takıma ait tüm veriler (mesajlar, ilanlar, bildirimler) kalıcı olarak silinecektir.
+                          </p>
+                          <button 
+                            onClick={() => setDeleteTeamModal(true)}
+                            className="px-4 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/30 transition-colors"
+                          >
+                            Takımı Sil
+                          </button>
+                        </div>
+                      </div>
+                      
                       <div className="flex justify-end">
                         <button className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-xl transition-all duration-300">
                           Değişiklikleri Kaydet
@@ -547,6 +594,48 @@ const TeamDetail = () => {
                   </span>
                 ) : (
                   'Evet, Çıkar'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Takım Silme Onay Modalı */}
+      {deleteTeamModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-xl border border-gray-700 shadow-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-xl font-bold text-white mb-4">Takımı Sil</h3>
+            <p className="text-gray-300 mb-2">
+              <span className="font-semibold text-white">{team.name}</span> takımını silmek istediğinize emin misiniz?
+            </p>
+            <p className="text-red-400 text-sm mb-6">
+              Bu işlem geri alınamaz. Takım ve takıma ait tüm veriler (mesajlar, ilanlar, bildirimler) kalıcı olarak silinecektir.
+            </p>
+            
+            <div className="flex justify-end gap-3">
+              <button
+                className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors"
+                onClick={() => setDeleteTeamModal(false)}
+                disabled={deletingTeam}
+              >
+                İptal
+              </button>
+              <button
+                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+                onClick={handleDeleteTeam}
+                disabled={deletingTeam}
+              >
+                {deletingTeam ? (
+                  <span className="flex items-center">
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Siliniyor...
+                  </span>
+                ) : (
+                  'Evet, Takımı Sil'
                 )}
               </button>
             </div>

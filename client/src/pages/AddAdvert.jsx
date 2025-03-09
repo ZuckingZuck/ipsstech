@@ -1,27 +1,77 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Menu from "../components/Profile/Menu";
 import axios from "axios";
 import { useSelector } from "react-redux";
 import { toast } from "react-toastify";
+import { useNavigate } from "react-router-dom";
 
 const AddAdvert = () => {
+  const navigate = useNavigate();
   const user = useSelector((state) => state.user.user);
   const [formData, setFormData] = useState({
     title: "",
     description: "",
     fields: [],
     skills: [],
+    teamId: "",
+    createTeam: false
   });
 
   const [tempInput, setTempInput] = useState({
     fields: "",
     skills: "",
   });
+  
+  const [teams, setTeams] = useState([]);
+  const [loading, setLoading] = useState(false);
+  
+  // Kullanıcının takımlarını getir
+  useEffect(() => {
+    const fetchTeams = async () => {
+      if (!user || !user.token) return;
+      
+      try {
+        const response = await axios.get(
+          `${import.meta.env.VITE_REACT_APP_API_URL}/api/team/myleds`,
+          {
+            headers: {
+              Authorization: `Bearer ${user.token}`
+            }
+          }
+        );
+        
+        if (response.status === 200) {
+          setTeams(response.data);
+        }
+      } catch (error) {
+        console.error('Takımlar alınamadı:', error);
+      }
+    };
+    
+    fetchTeams();
+  }, [user]);
 
   const handleChange = (e) => {
-    const { name, value } = e.target;
+    const { name, value, type, checked } = e.target;
+    
     if (name === "title" || name === "description") {
       setFormData((prev) => ({ ...prev, [name]: value }));
+    } else if (name === "teamId") {
+      // Eğer bir takım seçilirse, createTeam'i false yap
+      setFormData((prev) => ({ 
+        ...prev, 
+        [name]: value,
+        createTeam: value ? false : prev.createTeam
+      }));
+    } else if (type === "checkbox" && name === "createTeam") {
+      // Eğer createTeam işaretlenirse, teamId'yi boşalt
+      setFormData((prev) => ({ 
+        ...prev, 
+        [name]: checked,
+        teamId: checked ? "" : prev.teamId
+      }));
+    } else if (type === "checkbox") {
+      setFormData((prev) => ({ ...prev, [name]: checked }));
     } else {
       setTempInput((prev) => ({ ...prev, [name]: value }));
     }
@@ -50,19 +100,70 @@ const AddAdvert = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const response = await axios.post(
-      `${import.meta.env.VITE_REACT_APP_API_URL}/api/advert`,
-      formData,
-      {
-        headers: {
-          Authorization: `Bearer ${user.token}`,
-        },
+    
+    if (!formData.teamId && !formData.createTeam) {
+      toast.error("Lütfen bir takım seçin veya yeni takım oluşturmayı seçin");
+      return;
+    }
+    
+    setLoading(true);
+    
+    try {
+      // Eğer yeni takım oluşturulacaksa
+      let teamId = formData.teamId;
+      
+      if (formData.createTeam) {
+        // Kullanıcı adıyla yeni bir takım oluştur
+        const teamName = `${user.user.name}'in Takımı`;
+        
+        const teamResponse = await axios.post(
+          `${import.meta.env.VITE_REACT_APP_API_URL}/api/team`,
+          { name: teamName, description: `${formData.title} için oluşturuldu` },
+          {
+            headers: {
+              Authorization: `Bearer ${user.token}`
+            }
+          }
+        );
+        
+        if (teamResponse.status === 201) {
+          teamId = teamResponse.data._id;
+          toast.success("Yeni takım oluşturuldu");
+        } else {
+          toast.error("Takım oluşturulamadı");
+          setLoading(false);
+          return;
+        }
       }
-    );
+      
+      // İlanı yayınla
+      const advertData = {
+        title: formData.title,
+        description: formData.description,
+        fields: formData.fields,
+        skills: formData.skills,
+        teamId: teamId
+      };
+      
+      const response = await axios.post(
+        `${import.meta.env.VITE_REACT_APP_API_URL}/api/advert`,
+        advertData,
+        {
+          headers: {
+            Authorization: `Bearer ${user.token}`,
+          },
+        }
+      );
 
-    if (response.status === 200) {
-      toast.success("İlanınız yayınlandı.");
-      window.location.reload();
+      if (response.status === 200) {
+        toast.success("İlanınız yayınlandı.");
+        navigate('/me/adverts');
+      }
+    } catch (error) {
+      console.error('İlan yayınlama hatası:', error);
+      toast.error(error.response?.data?.error || "İlan yayınlanırken bir hata oluştu");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -123,6 +224,52 @@ const AddAdvert = () => {
                       placeholder="İlan detaylarını girin..."
                       required
                     />
+                  </div>
+                  
+                  {/* Takım Seçimi */}
+                  <div className="space-y-2">
+                    <label htmlFor="teamId" className="text-gray-300 font-medium block">
+                      Takım Seçimi
+                    </label>
+                    <div className="space-y-4">
+                      {teams.length > 0 && (
+                        <div className="space-y-2">
+                          <select
+                            name="teamId"
+                            id="teamId"
+                            value={formData.teamId}
+                            onChange={handleChange}
+                            disabled={formData.createTeam}
+                            className={`w-full p-3 bg-gray-800/50 rounded-xl border border-gray-700/50 focus:border-emerald-500/50 focus:ring-2 focus:ring-emerald-500/20 outline-none text-white transition-all duration-200 ${formData.createTeam ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          >
+                            <option value="">Takım seçin</option>
+                            {teams.map(team => (
+                              <option key={team._id} value={team._id}>{team.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          name="createTeam"
+                          id="createTeam"
+                          checked={formData.createTeam}
+                          onChange={handleChange}
+                          className="w-4 h-4 text-emerald-500 bg-gray-800 border-gray-700 rounded focus:ring-emerald-500/20"
+                        />
+                        <label htmlFor="createTeam" className="text-gray-300">
+                          Adınızla yeni bir takım oluştur
+                        </label>
+                      </div>
+                      
+                      {teams.length === 0 && !formData.createTeam && (
+                        <div className="text-amber-400 text-sm">
+                          Henüz bir takımınız yok. İlan yayınlamak için yeni bir takım oluşturun veya yukarıdaki seçeneği işaretleyin.
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Alanlar Input */}
@@ -205,9 +352,20 @@ const AddAdvert = () => {
                   <div className="pt-4">
                     <button
                       type="submit"
-                      className="w-full p-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-xl text-white font-medium shadow-lg transition-all duration-200 transform hover:scale-[1.02]"
+                      disabled={loading}
+                      className="w-full p-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-xl text-white font-medium shadow-lg transition-all duration-200 transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      İlanı Yayınla
+                      {loading ? (
+                        <span className="flex items-center justify-center">
+                          <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          İlan Yayınlanıyor...
+                        </span>
+                      ) : (
+                        "İlanı Yayınla"
+                      )}
                     </button>
                   </div>
                 </form>

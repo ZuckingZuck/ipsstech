@@ -14,6 +14,15 @@
   @apply transition-colors duration-200;
 }
 
+/* Input alanları için genel stil */
+input, textarea, select {
+  @apply text-white;
+}
+
+::placeholder {
+  @apply text-gray-400;
+}
+
 @keyframes gradient {
   0% {
     background-position: 0% 50%;

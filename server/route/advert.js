@@ -1,5 +1,5 @@
 const router = require("express").Router();
-const { AddAdvert, GetAdverts, AppealtoAdvert, ApproveAppeal, GetAdvertDetail, GetMyAdvertDetail, RejectAppeal } = require("../controller/advert");
+const { AddAdvert, GetAdverts, AppealtoAdvert, ApproveAppeal, GetAdvertDetail, GetMyAdvertDetail, RejectAppeal, DeleteAdvert } = require("../controller/advert");
 const { addUsertoRequest, requireAuth } = require("../middleware/authControl");
 
 
@@ -13,6 +13,7 @@ router.post("/", AddAdvert);
 router.post("/appeal/:id", AppealtoAdvert);
 router.get("/appeal/approve/:id", ApproveAppeal);
 router.get("/appeal/reject/:id", RejectAppeal);
+router.delete("/:id", DeleteAdvert);
 
 
 module.exports = router;

@@ -146,4 +146,83 @@ const RemoveTeamMember = async (req, res) => {
     }
 };
 
-module.exports = { GetTeams, GetMyTeams, GetMyLeds, GetTeamById, GetTeamMembers, RemoveTeamMember }
+// Yeni takım oluştur
+const CreateTeam = async (req, res) => {
+    try {
+        const { name, description } = req.body;
+        const userId = req.user.id;
+        
+        // Takım adı kontrolü
+        if (!name || name.trim() === '') {
+            return res.status(400).json({ error: "Takım adı gereklidir" });
+        }
+        
+        // Yeni takım oluştur
+        const newTeam = new TeamDB({
+            name,
+            description: description || '',
+            leader: userId,
+            members: [userId] // Lider aynı zamanda üye olarak da eklenir
+        });
+        
+        // Takımı kaydet
+        const savedTeam = await newTeam.save();
+        
+        res.status(201).json(savedTeam);
+    } catch (error) {
+        console.error("Takım oluşturma hatası:", error);
+        res.status(500).json({ error: "Takım oluşturulurken bir hata oluştu" });
+    }
+};
+
+// Takımı sil
+const DeleteTeam = async (req, res) => {
+    try {
+        const { teamId } = req.params;
+        const userId = req.user.id;
+        
+        // Takımı bul
+        const team = await TeamDB.findById(teamId);
+        
+        if (!team) {
+            return res.status(404).json({ error: "Takım bulunamadı" });
+        }
+        
+        // Kullanıcının takım lideri olup olmadığını kontrol et
+        if (team.leader.toString() !== userId) {
+            return res.status(403).json({ error: "Bu işlemi yapmak için takım lideri olmanız gerekiyor" });
+        }
+        
+        // İlgili tüm verileri silmek için diğer modelleri import et
+        const MessageDB = require("../model/message");
+        const AdvertDB = require("../model/advert");
+        const NotificationDB = require("../model/notification");
+        const TeamAppealDB = require("../model/teamAppeal");
+        
+        // Takıma ait tüm mesajları sil
+        await MessageDB.deleteMany({ teamId });
+        
+        // Takıma ait tüm ilanları bul
+        const adverts = await AdvertDB.find({ teamId });
+        const advertIds = adverts.map(advert => advert._id);
+        
+        // İlanlara ait tüm başvuruları sil
+        await TeamAppealDB.deleteMany({ advertId: { $in: advertIds } });
+        
+        // Takıma ait tüm ilanları sil
+        await AdvertDB.deleteMany({ teamId });
+        
+        // Takıma ait tüm bildirimleri sil
+        await NotificationDB.deleteMany({ teamId });
+        
+        // Takımı sil
+        await TeamDB.findByIdAndDelete(teamId);
+        
+        res.status(200).json({ message: "Takım ve ilgili tüm veriler başarıyla silindi" });
+    } catch (error) {
+        console.error("Takım silme hatası:", error);
+        res.status(500).json({ error: "Takım silinirken bir hata oluştu" });
+    }
+};
+
+module.exports = { GetTeams, GetMyTeams, GetMyLeds, GetTeamById, GetTeamMembers, RemoveTeamMember, CreateTeam, DeleteTeam };
