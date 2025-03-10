@@ -5,6 +5,26 @@ import axios from 'axios';
 import { useSocket } from '../context/SocketContext';
 import TeamChat from './TeamChat';
 import { toast } from 'react-toastify';
+import { FaMicrophone, FaMicrophoneSlash } from 'react-icons/fa';
+import styled from 'styled-components';
+
+const VoiceChatButton = styled.button`
+  background: ${props => props.$isActive ? '#7289da' : '#2c2f33'};
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin-left: 10px;
+
+  &:hover {
+    background: ${props => props.$isActive ? '#5b6eae' : '#23272a'};
+  }
+`;
 
 const TeamDetail = () => {
   const { teamId } = useParams();
@@ -12,7 +32,7 @@ const TeamDetail = () => {
   const user = useSelector((state) => state.user.user);
   const teams = useSelector((state) => state.team.myteams) || [];
   const ledTeams = useSelector((state) => state.team.myleds) || [];
-  const { socket, connected, setActiveTeam, fetchUnreadCounts } = useSocket();
+  const { socket, connected, setActiveTeam, fetchUnreadCounts, isInVoiceChat, setIsInVoiceChat } = useSocket();
   
   const [team, setTeam] = useState(null);
   const [members, setMembers] = useState([]);
@@ -25,6 +45,28 @@ const TeamDetail = () => {
   const [confirmModal, setConfirmModal] = useState({ show: false, memberId: null, memberName: '' });
   const [deleteTeamModal, setDeleteTeamModal] = useState(false);
   const [deletingTeam, setDeletingTeam] = useState(false);
+
+  // Kullanıcının takım üyesi olup olmadığını kontrol et
+  const isTeamMember = useMemo(() => {
+    if (!team || !user || !user.user) return false;
+    
+    // Takım lideri mi kontrol et
+    if (typeof team.leader === 'string') {
+      if (team.leader === user.user._id) return true;
+    } else if (team.leader && team.leader._id) {
+      if (team.leader._id === user.user._id) return true;
+    }
+    
+    // Takım üyesi mi kontrol et
+    return team.members.some(memberId => {
+      if (typeof memberId === 'string') {
+        return memberId === user.user._id;
+      } else if (memberId && memberId._id) {
+        return memberId._id === user.user._id;
+      }
+      return false;
+    });
+  }, [team, user]);
 
   // Aktif takımı ayarla
   useEffect(() => {
@@ -235,6 +277,55 @@ const TeamDetail = () => {
     }
   };
 
+  const toggleVoiceChat = async () => {
+    try {
+      if (!socket) {
+        toast.error("Sunucu bağlantısı kurulamadı");
+        return;
+      }
+
+      // Socket'e takım ID'sini ekle
+      socket.teamId = teamId;
+
+      if (!isInVoiceChat) {
+        // Sesli sohbete katıl
+        console.log("Sesli sohbete katılınıyor...");
+        socket.emit("join_voice_chat", {
+          teamId,
+          userId: user.user._id,
+          name: user.user.name,
+          surname: user.user.surname
+        });
+        
+        // Manuel olarak durumu güncelle
+        setIsInVoiceChat(true);
+        toast.success("Sesli sohbete katıldınız");
+      } else {
+        // Sesli sohbetten ayrıl
+        console.log("Sesli sohbetten ayrılınıyor...");
+        socket.emit("leave_voice_chat", {
+          teamId,
+          userId: user.user._id
+        });
+        
+        // Manuel olarak durumu güncelle
+        setIsInVoiceChat(false);
+        toast.success("Sesli sohbetten ayrıldınız");
+      }
+    } catch (error) {
+      console.error("Sesli sohbet hatası:", error);
+      toast.error("Sesli sohbet başlatılırken bir hata oluştu");
+    }
+  };
+
+  // TeamId değiştiğinde socket.teamId'yi güncelle
+  useEffect(() => {
+    if (socket && teamId) {
+      console.log("TeamId değişti, socket.teamId güncelleniyor:", teamId);
+      socket.teamId = teamId;
+    }
+  }, [socket, teamId]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-gray-900 via-gray-800 to-gray-900 py-12 flex items-center justify-center">
@@ -334,6 +425,24 @@ const TeamDetail = () => {
                   >
                     Ayarlar
                   </button>
+                )}
+                {isTeamMember && (
+                  <VoiceChatButton 
+                    $isActive={isInVoiceChat}
+                    onClick={toggleVoiceChat}
+                  >
+                    {isInVoiceChat ? (
+                      <>
+                        <FaMicrophoneSlash />
+                        Sesli Sohbetten Ayrıl
+                      </>
+                    ) : (
+                      <>
+                        <FaMicrophone />
+                        Sesli Sohbete Katıl
+                      </>
+                    )}
+                  </VoiceChatButton>
                 )}
               </div>
             </div>

@@ -7,12 +7,14 @@ import { useDispatch, useSelector } from "react-redux";
 import { fetchAdverts } from "./redux/advertSlice";
 import { useEffect } from "react";
 import { fetchLeds, fetchTeams } from "./redux/teamSlice";
-import SocketProvider from "./context/SocketContext";
+import SocketProvider, { useSocket } from "./context/SocketContext";
+import VoiceChatBubble from "./components/VoiceChat/VoiceChatBubble";
 
-function App() {
+function AppContent() {
   const dispatch = useDispatch();
   const user = useSelector((state) => state.user.user);
-  console.log("kullanıcıyım",user);
+  const { socket, isInVoiceChat, setIsInVoiceChat } = useSocket();
+  
   const GetAdverts = async () => {
     try {
       const response = await axios.get(`${import.meta.env.VITE_REACT_APP_API_URL}/api/advert`);
@@ -56,6 +58,7 @@ function App() {
       console.log(error);
     }
   }
+
   useEffect(() => {
     GetAdverts();
     if (user) {
@@ -63,28 +66,57 @@ function App() {
       GetLeds();
     }
   }, [user])
+
+  // Sesli sohbet durumunu konsola yazdır
+  useEffect(() => {
+    console.log("Sesli sohbet durumu:", isInVoiceChat);
+  }, [isInVoiceChat]);
+
   return (
-    <div className="App">
-      <Router>
+    <>
+      <ToastContainer
+        position="top-right"
+        autoClose={5000}
+        hideProgressBar={false}
+        newestOnTop
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="dark"
+        limit={3}
+      />
+      <Navbar />
+      <AppRouter />
+      {user?.user && socket && isInVoiceChat && (
+        <VoiceChatBubble 
+          socket={socket} 
+          onClose={() => {
+            console.log("VoiceChatBubble kapatılıyor");
+            setIsInVoiceChat(false);
+            if (socket) {
+              socket.emit("leave_voice_chat", {
+                teamId: socket.teamId,
+                userId: user.user._id
+              });
+            }
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function App() {
+  return (
+    <Router>
+      <div className="App">
         <SocketProvider>
-          <ToastContainer
-            position="top-right"
-            autoClose={5000}
-            hideProgressBar={false}
-            newestOnTop
-            closeOnClick
-            rtl={false}
-            pauseOnFocusLoss
-            draggable
-            pauseOnHover
-            theme="dark"
-            limit={3}
-          />
-          <Navbar />
-          <AppRouter />
+          <AppContent />
         </SocketProvider>
-      </Router>
-    </div>
+      </div>
+    </Router>
   );
 }
 

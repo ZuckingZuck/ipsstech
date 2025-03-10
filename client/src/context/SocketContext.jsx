@@ -28,6 +28,8 @@ export const SocketProvider = ({ children }) => {
   const user = useSelector((state) => state.user.user);
   const teams = useSelector((state) => state.team.myteams) || [];
   const ledTeams = useSelector((state) => state.team.myleds) || [];
+  const [activeTeam, setCurrentActiveTeam] = useState(null);
+  const [isInVoiceChat, setIsInVoiceChat] = useState(false);
 
   // Bildirim sesi oluştur ve yerel depolamadan ses ayarını yükle
   useEffect(() => {
@@ -526,6 +528,9 @@ export const SocketProvider = ({ children }) => {
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
+      auth: {
+        token: user.token
+      }
     });
 
     newSocket.on('connect', () => {
@@ -1118,6 +1123,7 @@ export const SocketProvider = ({ children }) => {
     
     setCurrentTeamId(teamId);
     currentTeamIdRef.current = teamId;
+    setCurrentActiveTeam(teamId);
     
     // Aktif takım ayarlandığında bildirimleri kapat
     if (teamId) {
@@ -1136,9 +1142,35 @@ export const SocketProvider = ({ children }) => {
       notificationsEnabledRef.current = true;
       console.log("Bildirimler etkinleştirildi, aktif takım temizlendi");
     }
-    
-    // Not: fetchUnreadCounts çağrısını kaldırdık çünkü sonsuz döngüye neden oluyordu
   }, []);
+
+  // Sesli sohbet için socket olayları
+  useEffect(() => {
+    if (!socketRef.current || !connected || !user || !user.user) return;
+
+    // Sesli sohbete katılma olayı
+    socketRef.current.on('voice_chat_joined', (data) => {
+      console.log('Sesli sohbete katılındı:', data);
+      setIsInVoiceChat(true);
+    });
+
+    // Sesli sohbetten ayrılma olayı
+    socketRef.current.on('voice_chat_left', (data) => {
+      console.log('Sesli sohbetten ayrılındı:', data);
+      setIsInVoiceChat(false);
+    });
+
+    // Sesli sohbet katılımcıları
+    socketRef.current.on('voice_chat_participants', (data) => {
+      console.log('Sesli sohbet katılımcıları:', data);
+    });
+
+    return () => {
+      socketRef.current.off('voice_chat_joined');
+      socketRef.current.off('voice_chat_left');
+      socketRef.current.off('voice_chat_participants');
+    };
+  }, [socketRef.current, user]);
 
   const value = {
     socket: socketRef.current,
@@ -1164,7 +1196,11 @@ export const SocketProvider = ({ children }) => {
     searchUsers,
     getUserProfile,
     markAllNotificationsAsRead,
-    deleteAllNotifications
+    deleteAllNotifications,
+    activeTeam,
+    setActiveTeam,
+    isInVoiceChat,
+    setIsInVoiceChat
   };
 
   return (

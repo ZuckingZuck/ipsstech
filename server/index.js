@@ -38,6 +38,7 @@ const connectedUsers = new Map(); // Kullanıcı ID'si -> socket.id eşleşmesi
 const userTeams = new Map(); // Kullanıcı ID'si -> takım ID'leri eşleşmesi
 const teamUsers = new Map(); // Takım ID'si -> kullanıcı ID'leri eşleşmesi
 const userActivity = new Map(); // Kullanıcı ID'si -> son aktivite zamanı
+const teamVoiceChats = new Map(); // Takım ID'si -> sesli sohbet odası bilgileri
 
 // io ve connectedUsers nesnelerini app nesnesine ekle
 app.set('io', io);
@@ -104,6 +105,9 @@ io.on("connection", (socket) => {
             if (!userId) {
                 return socket.emit("error", { message: "Kullanıcı kimliği gerekli" });
             }
+            
+            // Socket nesnesine kullanıcı ID'sini ekle
+            socket.userId = userId;
             
             // Kullanıcıyı bağlı kullanıcılar listesine ekle
             connectedUsers.set(userId, socket.id);
@@ -658,6 +662,228 @@ io.on("connection", (socket) => {
             
             // Tüm takımlara kullanıcının offline olduğunu bildir
             broadcastUserStatus();
+        }
+    });
+
+    // Sesli sohbete katılma
+    socket.on("join_voice_chat", async ({ teamId, userId, name, surname }) => {
+        try {
+            console.log("Sesli sohbete katılma isteği:", { teamId, userId, name, surname });
+            
+            // Socket nesnesine takım ID'sini ekle
+            socket.teamId = teamId;
+            
+            // Kullanıcının takımda olup olmadığını kontrol et
+            const team = await TeamDB.findById(teamId);
+            if (!team || !team.members.includes(userId)) {
+                socket.emit("voice_chat_error", { message: "Bu takımın sesli sohbetine katılamazsınız" });
+                return;
+            }
+
+            // Sesli sohbet odasını oluştur veya mevcut odaya katıl
+            if (!teamVoiceChats.has(teamId)) {
+                teamVoiceChats.set(teamId, {
+                    participants: new Set(),
+                    mutedUsers: new Set(),
+                    participantDetails: new Map()
+                });
+            }
+
+            const voiceChat = teamVoiceChats.get(teamId);
+            voiceChat.participants.add(userId);
+            
+            // Katılımcı detaylarını kaydet
+            voiceChat.participantDetails.set(userId, {
+                userId,
+                name,
+                surname,
+                isMuted: false,
+                isSpeaking: false
+            });
+            
+            socket.join(`voiceChat:${teamId}`);
+
+            // Katılımcıya sesli sohbete katıldığını bildir
+            socket.emit("voice_chat_joined", {
+                teamId,
+                userId,
+                success: true
+            });
+
+            // Katılımcı listesini oluştur
+            const participantsList = Array.from(voiceChat.participantDetails.values());
+            
+            // Tüm katılımcılara güncel listeyi gönder
+            io.to(`voiceChat:${teamId}`).emit("voice_chat_participants", participantsList);
+            
+            console.log("Sesli sohbet katılımcıları:", participantsList);
+        } catch (error) {
+            console.error("Sesli sohbet hatası:", error);
+            socket.emit("voice_chat_error", { message: "Bir hata oluştu" });
+        }
+    });
+
+    // Sesli sohbetten ayrılma
+    socket.on("leave_voice_chat", ({ teamId, userId }) => {
+        console.log("Sesli sohbetten ayrılma isteği:", { teamId, userId });
+        
+        const voiceChat = teamVoiceChats.get(teamId);
+        if (voiceChat) {
+            voiceChat.participants.delete(userId);
+            voiceChat.mutedUsers.delete(userId);
+            voiceChat.participantDetails.delete(userId);
+            
+            socket.leave(`voiceChat:${teamId}`);
+
+            // Kullanıcıya sesli sohbetten ayrıldığını bildir
+            socket.emit("voice_chat_left", {
+                teamId,
+                userId,
+                success: true
+            });
+
+            // Katılımcı listesini oluştur
+            const participantsList = Array.from(voiceChat.participantDetails.values());
+            
+            // Tüm katılımcılara güncel listeyi gönder
+            io.to(`voiceChat:${teamId}`).emit("voice_chat_participants", participantsList);
+            
+            console.log("Güncel sesli sohbet katılımcıları:", participantsList);
+
+            // Odada kimse kalmadıysa odayı sil
+            if (voiceChat.participants.size === 0) {
+                teamVoiceChats.delete(teamId);
+                console.log("Sesli sohbet odası silindi:", teamId);
+            }
+        }
+    });
+
+    // Mikrofon durumu değiştirme
+    socket.on("voice_chat_mute", ({ userId, isMuted }) => {
+        console.log("Mikrofon durumu değiştirme isteği:", { userId, isMuted });
+        
+        // Kullanıcının tüm sesli sohbet odalarını bul
+        for (const [teamId, voiceChat] of teamVoiceChats.entries()) {
+            if (voiceChat.participants.has(userId)) {
+                // Mikrofon durumunu güncelle
+                if (isMuted) {
+                    voiceChat.mutedUsers.add(userId);
+                } else {
+                    voiceChat.mutedUsers.delete(userId);
+                }
+                
+                // Katılımcı detaylarını güncelle
+                const participantDetail = voiceChat.participantDetails.get(userId);
+                if (participantDetail) {
+                    participantDetail.isMuted = isMuted;
+                    voiceChat.participantDetails.set(userId, participantDetail);
+                }
+
+                // Katılımcı listesini oluştur
+                const participantsList = Array.from(voiceChat.participantDetails.values());
+                
+                // Tüm katılımcılara güncel listeyi gönder
+                io.to(`voiceChat:${teamId}`).emit("voice_chat_participants", participantsList);
+                
+                console.log("Mikrofon durumu güncellendi:", { userId, isMuted });
+                console.log("Güncel sesli sohbet katılımcıları:", participantsList);
+            }
+        }
+    });
+
+    // Konuşma durumu değiştirme
+    const speakingStatus = new Map();
+    socket.on("voice_chat_speaking", ({ userId, isSpeaking }) => {
+        // Çok fazla log oluşturmaması için sadece durum değiştiğinde log oluştur
+        if (speakingStatus.get(userId) !== isSpeaking) {
+            console.log("Konuşma durumu değiştirme isteği:", { userId, isSpeaking });
+            speakingStatus.set(userId, isSpeaking);
+            
+            // Kullanıcının tüm sesli sohbet odalarını bul
+            for (const [teamId, voiceChat] of teamVoiceChats.entries()) {
+                if (voiceChat.participants.has(userId)) {
+                    // Katılımcı detaylarını güncelle
+                    const participantDetail = voiceChat.participantDetails.get(userId);
+                    if (participantDetail) {
+                        participantDetail.isSpeaking = isSpeaking;
+                        voiceChat.participantDetails.set(userId, participantDetail);
+                    }
+
+                    // Katılımcı listesini oluştur
+                    const participantsList = Array.from(voiceChat.participantDetails.values());
+                    
+                    // Tüm katılımcılara güncel listeyi gönder
+                    io.to(`voiceChat:${teamId}`).emit("voice_chat_participants", participantsList);
+                }
+            }
+        }
+    });
+
+    // Eski sesli sohbet olayları (geriye uyumluluk için)
+    socket.on("joinVoiceChat", async ({ teamId, userId }) => {
+        // Yeni API'ye yönlendir
+        socket.emit("voice_chat_error", { message: "Lütfen uygulamanızı güncelleyin" });
+    });
+
+    socket.on("leaveVoiceChat", ({ teamId, userId }) => {
+        // Yeni API'ye yönlendir
+        socket.emit("voice_chat_error", { message: "Lütfen uygulamanızı güncelleyin" });
+    });
+
+    socket.on("toggleMute", ({ teamId, userId }) => {
+        // Yeni API'ye yönlendir
+        socket.emit("voice_chat_error", { message: "Lütfen uygulamanızı güncelleyin" });
+    });
+
+    // WebRTC sinyal olayları
+    socket.on("webrtc_offer", (data) => {
+        const { offer, targetUserId, fromUserId } = data;
+        console.log(`WebRTC teklifi alındı: ${fromUserId} -> ${targetUserId}`);
+        
+        // Hedef kullanıcıya teklifi ilet
+        const targetSocketId = connectedUsers.get(targetUserId);
+        if (targetSocketId) {
+            io.to(targetSocketId).emit("webrtc_offer", {
+                offer,
+                fromUserId
+            });
+            console.log(`Teklif ${targetUserId} kullanıcısına iletildi`);
+        } else {
+            console.log(`${targetUserId} kullanıcısı çevrimiçi değil`);
+        }
+    });
+    
+    socket.on("webrtc_answer", (data) => {
+        const { answer, targetUserId, fromUserId } = data;
+        console.log(`WebRTC cevabı alındı: ${fromUserId} -> ${targetUserId}`);
+        
+        // Hedef kullanıcıya cevabı ilet
+        const targetSocketId = connectedUsers.get(targetUserId);
+        if (targetSocketId) {
+            io.to(targetSocketId).emit("webrtc_answer", {
+                answer,
+                fromUserId
+            });
+            console.log(`Cevap ${targetUserId} kullanıcısına iletildi`);
+        } else {
+            console.log(`${targetUserId} kullanıcısı çevrimiçi değil`);
+        }
+    });
+    
+    socket.on("webrtc_ice_candidate", (data) => {
+        const { candidate, targetUserId, fromUserId } = data;
+        console.log(`ICE adayı alındı: ${fromUserId} -> ${targetUserId}`);
+        
+        // Hedef kullanıcıya ICE adayını ilet
+        const targetSocketId = connectedUsers.get(targetUserId);
+        if (targetSocketId) {
+            io.to(targetSocketId).emit("webrtc_ice_candidate", {
+                candidate,
+                fromUserId
+            });
+            console.log(`ICE adayı ${targetUserId} kullanıcısına iletildi`);
+        } else {
+            console.log(`${targetUserId} kullanıcısı çevrimiçi değil`);
         }
     });
 });
